@@ -25,6 +25,7 @@
   {registered, []},
   {applications, [crypto,
                   ibrowse,
+                  inets,
                   jsx,
                   kernel,
                   public_key,
