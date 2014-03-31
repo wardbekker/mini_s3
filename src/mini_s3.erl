@@ -114,7 +114,7 @@ manual_start() ->
     application:start(inets).
 
 -type credentials() :: {credentials, baked_in, string(), string()} |
-                       {credentials, iam, string()}.
+                       {credentials, iam}.
 
 -spec new(credentials()) -> config().
 
@@ -123,10 +123,8 @@ new({credentials, baked_in, AccessKeyID, SecretAccessKey}) ->
        credentials_store=baked_in,
        access_key_id=AccessKeyID,
        secret_access_key=SecretAccessKey};
-new({credentials, iam, CredentialsIamRole}) ->
-    #config{
-       credentials_store=iam,
-       credentials_iam_role=CredentialsIamRole}.
+new({credentials, iam}) ->
+    #config{credentials_store=iam}.
 
 -spec new(credentials(), string()) -> config().
 
@@ -803,9 +801,21 @@ s3_xml_request(Config, Method, Host, Path, Subresource, Params, POSTData, Header
             XML
     end.
 
-get_credentials(baked_in, _, AccessKey, SecretKey) ->
+get_credentials_iam_role() ->
+    URI = ?AMAZON_METADATA_SERVICE_URI ++ "iam/security-credentials/",
+    Resp = ibrowse:send_req(URI, [], get),
+    case Resp of
+        {ok, "200", _Headers, CredentialsIamRole} ->
+            CredentialsIamRole;
+        {ok, ErrCode, _Headers, _Body} ->
+            erlang:error({iam_error, ErrCode,
+                          "Failed to retrieve Amazon IAM Role"})
+    end.
+
+get_credentials(baked_in, AccessKey, SecretKey) ->
     {AccessKey, SecretKey};
-get_credentials(iam, CredentialsIamRole, _, _) ->
+get_credentials(iam, _, _) ->
+    CredentialsIamRole = get_credentials_iam_role(),
     URI = ?AMAZON_METADATA_SERVICE_URI ++ "iam/security-credentials/" ++ CredentialsIamRole,
     Resp = ibrowse:send_req(URI, [], get),
     case Resp of
@@ -816,16 +826,14 @@ get_credentials(iam, CredentialsIamRole, _, _) ->
             {AccessKeyBin, SecretAccessKeyBin};
         {ok, ErrCode, _Headers, _Body} ->
             erlang:error({iam_error, ErrCode,
-                          "Failed to retrieve Amazon IAM credentials"})
+                          "Failed to retrieve Amazon IAM Credentials"})
     end.
 
 s3_request(Config = #config{credentials_store=CredentialsStore,
-                            credentials_iam_role=CredentialsIamRole,
                             access_key_id=MaybeAccessKey,
                             secret_access_key=MaybeSecretKey},
            Method, Host, Path, Subresource, Params, POSTData, Headers) ->
-    {AccessKey, SecretKey} = get_credentials(CredentialsStore, CredentialsIamRole,
-                                             MaybeAccessKey, MaybeSecretKey),
+    {AccessKey, SecretKey} = get_credentials(CredentialsStore, MaybeAccessKey, MaybeSecretKey),
     {ContentMD5, ContentType, Body} =
         case POSTData of
             {PD, CT} ->
