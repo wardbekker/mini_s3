@@ -21,9 +21,9 @@
 
 -module(mini_s3).
 
--export([new/2,
+-export([new/1,
+         new/2,
          new/3,
-         new/4,
          create_bucket/3,
          create_bucket/4,
          delete_bucket/1,
@@ -113,29 +113,33 @@ manual_start() ->
     application:start(ssl),
     application:start(inets).
 
--spec new(string(), string()) -> config().
+-type credentials() :: {credentials, baked_in, string(), string()} |
+                       {credentials, iam, string()}.
 
-new(AccessKeyID, SecretAccessKey) ->
+-spec new(credentials()) -> config().
+
+new({credentials, baked_in, AccessKeyID, SecretAccessKey}) ->
     #config{
-     access_key_id=AccessKeyID,
-     secret_access_key=SecretAccessKey}.
-
--spec new(string(), string(), string()) -> config().
-
-new(AccessKeyID, SecretAccessKey, Host) ->
+       credentials_store=baked_in,
+       access_key_id=AccessKeyID,
+       secret_access_key=SecretAccessKey};
+new({credentials, iam, CredentialsIamRole}) ->
     #config{
-     access_key_id=AccessKeyID,
-     secret_access_key=SecretAccessKey,
-     s3_url=Host}.
+       credentials_store=iam,
+       credentials_iam_role=CredentialsIamRole}.
 
--spec new(string(), string(), string(), bucket_access_type()) -> config().
+-spec new(credentials(), string()) -> config().
 
-new(AccessKeyID, SecretAccessKey, Host, BucketAccessType) ->
-    #config{
-     access_key_id=AccessKeyID,
-     secret_access_key=SecretAccessKey,
-     s3_url=Host,
-     bucket_access_type=BucketAccessType}.
+new(Credentials, Host) ->
+    Config = new(Credentials),
+    Config#config{s3_url=Host}.
+
+-spec new(credentials(), string(), bucket_access_type()) -> config().
+
+new(Credentials, Host, BucketAccessType) ->
+    Config = new(Credentials),
+    Config#config{s3_url=Host,
+                  bucket_access_type=BucketAccessType}.
 
 
 
@@ -799,9 +803,29 @@ s3_xml_request(Config, Method, Host, Path, Subresource, Params, POSTData, Header
             XML
     end.
 
-s3_request(Config = #config{access_key_id=AccessKey,
-                            secret_access_key=SecretKey},
+get_credentials(baked_in, _, AccessKey, SecretKey) ->
+    {AccessKey, SecretKey};
+get_credentials(iam, CredentialsIamRole, _, _) ->
+    URI = ?AMAZON_METADATA_SERVICE_URI ++ "iam/security-credentials/" ++ CredentialsIamRole,
+    Resp = ibrowse:send_req(URI, [], get),
+    case Resp of
+        {ok, "200", _Headers, JSONBody} ->
+            IAMData = jsx:decode(list_to_binary(JSONBody)),
+            AccessKeyBin = proplists:get_value(<<"AccessKeyId">>, IAMData),
+            SecretAccessKeyBin = proplists:get_value(<<"SecretAccessKey">>, IAMData),
+            {AccessKeyBin, SecretAccessKeyBin};
+        {ok, ErrCode, _Headers, _Body} ->
+            erlang:error({iam_error, ErrCode,
+                          "Failed to retrieve Amazon IAM credentials"})
+    end.
+
+s3_request(Config = #config{credentials_store=CredentialsStore,
+                            credentials_iam_role=CredentialsIamRole,
+                            access_key_id=MaybeAccessKey,
+                            secret_access_key=MaybeSecretKey},
            Method, Host, Path, Subresource, Params, POSTData, Headers) ->
+    {AccessKey, SecretKey} = get_credentials(CredentialsStore, CredentialsIamRole,
+                                             MaybeAccessKey, MaybeSecretKey),
     {ContentMD5, ContentType, Body} =
         case POSTData of
             {PD, CT} ->

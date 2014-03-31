@@ -23,14 +23,16 @@
  [{description, "A Robust Amazon S3 client for Erlang"},
   {vsn, "0.0.1"},
   {registered, []},
-  {applications, [stdlib,
+  {applications, [crypto,
+                  ibrowse,
+                  jsx,
                   kernel,
-                  sasl,
                   public_key,
-                  crypto,
+                  sasl,
                   ssl,
-                  xmerl,
-                  ibrowse]},
+                  stdlib,
+                  xmerl
+                 ]},
   {modules, []},
   {env, []}
  ]
