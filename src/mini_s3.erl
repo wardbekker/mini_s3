@@ -812,9 +812,9 @@ get_credentials_iam_role() ->
                           "Failed to retrieve Amazon IAM Role"})
     end.
 
-get_credentials(baked_in, AccessKey, SecretKey) ->
-    {AccessKey, SecretKey};
-get_credentials(iam, _, _) ->
+get_credentials(baked_in, Headers, AccessKey, SecretKey) ->
+    {Headers, AccessKey, SecretKey};
+get_credentials(iam, InitialHeaders, _, _) ->
     CredentialsIamRole = get_credentials_iam_role(),
     URI = ?AMAZON_METADATA_SERVICE_URI ++ "iam/security-credentials/" ++ CredentialsIamRole,
     Resp = ibrowse:send_req(URI, [], get),
@@ -823,7 +823,9 @@ get_credentials(iam, _, _) ->
             IAMData = jsx:decode(list_to_binary(JSONBody)),
             AccessKeyBin = proplists:get_value(<<"AccessKeyId">>, IAMData),
             SecretAccessKeyBin = proplists:get_value(<<"SecretAccessKey">>, IAMData),
-            {AccessKeyBin, SecretAccessKeyBin};
+            SecurityToken = proplists:get_value(<<"Token">>, IAMData),
+            Headers = [{"x-amz-security-token", SecurityToken} | InitialHeaders],
+            {Headers, AccessKeyBin, SecretAccessKeyBin};
         {ok, ErrCode, _Headers, _Body} ->
             erlang:error({iam_error, ErrCode,
                           "Failed to retrieve Amazon IAM Credentials"})
@@ -832,8 +834,10 @@ get_credentials(iam, _, _) ->
 s3_request(Config = #config{credentials_store=CredentialsStore,
                             access_key_id=MaybeAccessKey,
                             secret_access_key=MaybeSecretKey},
-           Method, Host, Path, Subresource, Params, POSTData, Headers) ->
-    {AccessKey, SecretKey} = get_credentials(CredentialsStore, MaybeAccessKey, MaybeSecretKey),
+           Method, Host, Path, Subresource, Params, POSTData, InitialHeaders) ->
+    {Headers, AccessKey, SecretKey} =
+        get_credentials(CredentialsStore, InitialHeaders,
+                        MaybeAccessKey, MaybeSecretKey),
     {ContentMD5, ContentType, Body} =
         case POSTData of
             {PD, CT} ->
@@ -865,11 +869,11 @@ s3_request(Config = #config{credentials_store=CredentialsStore,
             "" -> [];
             _ -> [{"content-md5", binary_to_list(ContentMD5)}]
         end,
-    RequestHeaders1 = case proplists:is_defined("Content-Type", RequestHeaders0) of
+    RequestHeaders1 = case proplists:is_defined("content-type", RequestHeaders0) of
                           true ->
                               RequestHeaders0;
                           false ->
-                              [{"Content-Type", ContentType} | RequestHeaders0]
+                              [{"content-type", ContentType} | RequestHeaders0]
                       end,
     RequestURI = lists:flatten([format_s3_uri(Config, Host),
                                 EscapedPath,
