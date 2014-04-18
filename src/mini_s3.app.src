@@ -29,7 +29,6 @@
                   jsx,
                   kernel,
                   public_key,
-                  sasl,
                   ssl,
                   stdlib,
                   xmerl
